@@ -217,6 +217,17 @@ private:
     NodePtr     _dummyTail; // 虚拟尾结点
 };
 
+
+/*
+我在实现 LRU-K 时遇到的难点是：历史访问计数和历史 value 分别存放在两个容器中。
+历史计数使用容量受限的 LRU；当历史缓存满时，它会自动淘汰最久未使用的 key。但原先代码无法感知“淘汰了哪个 key”，导致 _historyValueMap 中对应的 value 无法同步删除，可能形成残留数据并持续占用内存。
+
+我的解决方法：
+通过在基础LRU中添加一个返回值类型为bool，可以将key加入缓存，并返回被淘汰key的接口，并在put中调用，返回为true表示有key淘汰并通过引用参数获取被淘汰的key。在LRUK中判断是否有key淘汰，如果有就删除historyValueMap中的key。
+
+我的解决方式是扩展基础 LRU 的写入接口：在插入新 key 时，接口通过 bool 返回值表示是否发生淘汰，并通过引用参数返回被淘汰的 key。LRU-K 更新历史记录后，如果发现发生淘汰，就立即根据该 key 删除 _historyValueMap 中对应的 value。
+这样保证了历史计数和历史 value 的生命周期一致，避免了过期 value 残留和内存增长问题。
+*/
 template<typename Key, typename Value>
 class LruKCache : public LruCache<Key, Value>
 {
