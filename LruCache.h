@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <stdexcept>
 
 #include "ICachePolicy.h"
 
@@ -50,8 +51,8 @@ public:
     using NodePtr = std::shared_ptr<LruNodeType>;
     using NodeMap = std::unordered_map<Key, NodePtr>;
 
-    LruCache(int capacity)
-        : _capacity{capacity}
+    explicit LruCache(int capacity)
+        : _capacity{validateCapacity(capacity)}
     {
         initializeList();
     }
@@ -61,23 +62,46 @@ public:
     // 添加缓存
     void put(Key key, Value value) override
     {
-        if (_capacity <= 0)
-            return;
+        // 被驱逐（从LRU删除的键）
+        Key ignoredEvictedKey{};
+        putAndGetEvictedKey(key, value, ignoredEvictedKey);
+    }
+
+    // 返回本次是否因插入新结点而发生淘汰
+    // 若返回true，evictedKey为被淘汰结点的key
+    // 替代addNewNode()
+    bool putAndGetEvictedKey(const Key& key,
+                             const Value& value,
+                             Key& evictedKey)
+    {
+        // capacity == 0表示禁用缓存
+        if (_capacity == 0) return false;
 
         std::lock_guard<std::mutex> lock(_mutex);
+
         auto it = _nodeMap.find(key);
         if (it != _nodeMap.end()) {
-            // 如果在当前容器中，则更新value，并调用get方法，代表该数据刚被访问
             updateExistingNode(it->second, value);
-            return;
+            return false;
         }
 
-        addNewNode(key, value);
+        bool evicted = false;
+        if (_nodeMap.size() >= static_cast<size_t>(_capacity)) {
+            evictedKey = evictLeastRecent();
+            evicted = true;
+        }
+
+        NodePtr newNode = std::make_shared<LruNodeType>(key, value);
+        insertNode(newNode);
+        _nodeMap[key] = newNode;
+
+        return evicted;
     }
 
     bool get(Key key, Value &value) override
     {
         std::lock_guard<std::mutex> lock(_mutex);
+
         auto it = _nodeMap.find(key);
         if (it != _nodeMap.end()) {
             moveToMostRecent(it->second);
@@ -97,6 +121,7 @@ public:
     void remove(Key key)
     {
         std::lock_guard<std::mutex> lock(_mutex);
+
         auto it = _nodeMap.find(key);
         if (it != _nodeMap.end()) {
             removeNode(it->second);
@@ -105,11 +130,20 @@ public:
     }
 
 private:
+    static int validateCapacity(int capacity)
+    {
+        if (capacity < 0) {
+            throw std::invalid_argument("LruCache capacity must not be negative");
+        }
+        return capacity;
+    }
+
     void initializeList()
     {
         // 创建首尾虚拟节点
         _dummyHead = std::make_shared<LruNodeType>(Key(), Value());
         _dummyTail = std::make_shared<LruNodeType>(Key(), Value());
+        
         _dummyHead->_next = _dummyTail;
         _dummyTail->_prev = _dummyHead;
     }
@@ -121,17 +155,17 @@ private:
     }
 
 
-    void addNewNode(const Key& key, const Value& value)
-    {
-        if (_nodeMap.size() >= _capacity)
-        {
-            evictLeastRecent();
-        }
+    // void addNewNode(const Key& key, const Value& value)
+    // {
+    //     if (_nodeMap.size() >= _capacity)
+    //     {
+    //         evictLeastRecent();
+    //     }
 
-        NodePtr newNode = std::make_shared<LruNodeType>(key, value);
-        insertNode(newNode);
-        _nodeMap[key] = newNode;
-    }
+    //     NodePtr newNode = std::make_shared<LruNodeType>(key, value);
+    //     insertNode(newNode);
+    //     _nodeMap[key] = newNode;
+    // }
 
     // 将该结点移动到最新位置
     void moveToMostRecent(NodePtr node)
@@ -156,17 +190,21 @@ private:
     void insertNode(NodePtr node)
     {
         node->_next = _dummyTail;
-        node->_prev = _dummyTail->_prev;
+        node->_prev = _dummyTail->_prev.lock();
         _dummyTail->_prev.lock()->_next = node;
         _dummyTail->_prev = node;
     }
 
-    // 驱逐最近最少访问
-    void evictLeastRecent()
+    // 驱逐最近最少访问，调用前要保证缓存非空
+    Key evictLeastRecent()
     {
         NodePtr leastRecent = _dummyHead->_next;
+        Key evictedKey = leastRecent->getKey();
+
         removeNode(leastRecent);
-        _nodeMap.erase(leastRecent->getKey());
+        _nodeMap.erase(evictedKey);
+
+        return evictedKey;
     }
 
 
@@ -184,9 +222,10 @@ class LruKCache : public LruCache<Key, Value>
 {
 public:
     LruKCache(int capacity, int historyCapacity, int k)
-        : LruCache<Key, Value>(capacity)
-        , _historyList(std::make_unique<LruCache<Key, size_t>>(historyCapacity))
-        , _k(k)
+        : LruCache<Key, Value>(validateMainCapacity(capacity))
+        , _historyList(std::make_unique<LruCache<Key, size_t>>(
+                validateHistoryCapacity(historyCapacity)))
+        , _k(validateK(k))
     {}
 
     Value get(Key key) override
@@ -211,15 +250,11 @@ public:
             return true;
         }
 
-        // 获取并更新访问历史计数
-        // 如果未在_historyList, historyCount为0，因为get(key)中Value value{};
-        // size_t value{}; value默认值为0
-        size_t historyCount = _historyList->get(key);
-        ++historyCount;
-        _historyList->put(key, historyCount);
+        // 主缓存未命中，本次get计入历史访问
+        const size_t historyCount = recordHistoryAccess(key);
 
         // 如果数据不在主缓存，但访问次数达到了k次
-        if (historyCount >= _k)
+        if (historyCount >= static_cast<size_t>(_k))
         {
             // 检查是否有历史值记录
             auto it = _historyValueMap.find(key);
@@ -249,6 +284,7 @@ public:
 
         // 检查是否已在主缓存
         Value existingValue{};
+
         bool inMainCache = LruCache<Key, Value>::get(key, existingValue);
 
         if (inMainCache)
@@ -258,16 +294,14 @@ public:
             return;
         }
 
-        // 获取并更新访问历史
-        size_t historyCount = _historyList->get(key);
-        ++historyCount;
-        _historyList->put(key, historyCount);
+        // 缓存未命中，本次 put 计入历史访问
+        size_t historyCount = recordHistoryAccess(key);
 
         // 保存值到历史记录映射，供后续get操作使用
         _historyValueMap[key] = value;
 
         // 检查是否到达k次访问阈值
-        if (historyCount >= _k)
+        if (historyCount >= static_cast<size_t>(_k))
         {
             // 添加到主缓存
             _historyList->remove(key);
@@ -277,6 +311,55 @@ public:
     }
 
 private:
+    static int validateMainCapacity(int capacity)
+    {
+        if (capacity <= 0) {
+            throw std::invalid_argument(
+                "LruKCache capacity must be greater than 0");
+        }
+
+        return capacity;
+    }
+
+    static int validateHistoryCapacity(int historyCapacity)
+    {
+        if (historyCapacity <= 0) {
+            throw std::invalid_argument(
+                "LruKCache historyCapacity must be greater than 0");
+        }
+
+        return historyCapacity;
+    }
+
+    static int validateK(int k)
+    {
+        if (k <= 0) {
+            throw std::invalid_argument(
+                "LruKCache k must be greater than 0");
+        }
+
+        return k;
+    }
+
+    // 调用者必须已经持有 _mutex_k。
+    size_t recordHistoryAccess(const Key& key)
+    {
+        size_t historyCount = _historyList->get(key);
+        ++historyCount;
+
+        Key evictedHistoryKey{};
+        const bool historyEvicted =
+            _historyList->putAndGetEvictedKey(
+                key, historyCount, evictedHistoryKey);
+
+        // 历史访问记录被 LRU 淘汰时，同步清理暂存的 value。
+        if (historyEvicted) {
+            _historyValueMap.erase(evictedHistoryKey);
+        }
+
+        return historyCount;
+    }
+
     int _k; // 进入缓存队列的评判标准
     std::unique_ptr<LruCache<Key, size_t>> _historyList; // 访问数据历史记录（value为访问次数）
     std::unordered_map<Key, Value> _historyValueMap; // 存储未达到k次访问的数据值 
