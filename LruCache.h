@@ -6,6 +6,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <stdexcept>
+#include <chrono>
 
 #include "ICachePolicy.h"
 
@@ -60,7 +61,7 @@ public:
     ~LruCache() override = default;
 
     // 添加缓存
-    void put(Key key, Value value) override
+    void put(const Key &key, Value value) override
     {
         // 被驱逐（从LRU删除的键）
         Key ignoredEvictedKey{};
@@ -98,7 +99,7 @@ public:
         return evicted;
     }
 
-    bool get(Key key, Value &value) override
+    bool get(const Key &key, Value &value) override
     {
         std::lock_guard<std::mutex> lock(_mutex);
 
@@ -111,7 +112,7 @@ public:
         return false;
     }
 
-    Value get(Key key) override
+    Value get(const Key &key) override
     {
         Value value{};
         get(key, value);
@@ -148,7 +149,7 @@ private:
         _dummyTail->_prev = _dummyHead;
     }
 
-    void updateExistingNode(NodePtr node, const Value& value)
+    void updateExistingNode(NodePtr node, const Value &value)
     {
         node->setValue(value);
         moveToMostRecent(node);
@@ -239,7 +240,7 @@ public:
         , _k(validateK(k))
     {}
 
-    Value get(Key key) override
+    Value get(const Key &key) override
     {
         // 首先尝试从主缓存获取数据
         Value value{};
@@ -249,7 +250,7 @@ public:
         return value;
     }
 
-    bool get(Key key, Value &value) override
+    bool get(const Key &key, Value &value) override
     {
         std::lock_guard<std::mutex> lock(_mutex_k);
 
@@ -289,7 +290,7 @@ public:
         return false;
     }
 
-    void put(Key key, Value value) override
+    void put(const Key &key, Value value) override
     {
         std::lock_guard<std::mutex> lock(_mutex_k);
 
@@ -378,16 +379,114 @@ private:
 };
 
 
+// 使用组合实现定时过期的Lru
+template<typename Value>
+class ValueWithTTL
+{
+public:
+    using Clock = std::chrono::steady_clock;
+    
+    ValueWithTTL() = default;
 
+    ValueWithTTL(const Value& value, Clock::time_point expireTime)
+                : _value(value), _expireTime(expireTime)
+    {}
+    Value GetValue() const
+    {
+        return _value;
+    }
+    Clock::time_point GetexpireTime() const
+    {
+        return _expireTime;
+    }
 
+private:
+    Value _value{};
+    // 默认对象视为已经过期
+    Clock::time_point _expireTime{
+        Clock::time_point::min()
+    };
+};
 
+template<typename Key, typename Value>
+class LruCacheWithTTL : public ICachePolicy<Key, Value>
+{
 
+public:
+    using Clock = std::chrono::steady_clock;
+    using Duration = std::chrono::milliseconds;
 
+    // LruCacheWithTTL() = default;
 
+    explicit LruCacheWithTTL(int capacity
+        , Duration defaultTTL = Duration{10})
+        : _cache(capacity) 
+        , _defaultTTL(validateTTL(defaultTTL))
+    {}
 
+    ~LruCacheWithTTL() override = default;
 
+    void put(const Key &key, const Value value) override
+    {
+        put(key, value, _defaultTTL);
+    }
 
+    void put(const Key &key, const Value &value, Duration ttl) 
+    {
+        std::lock_guard<std::mutex> lock(_ttl_mutex);
 
+        ttl = validateTTL(ttl);
 
+        _cache.put(key, ValueWithTTL<Value>{
+            value, Clock::now() + ttl
+        });
+    }
+
+    bool get(const Key &key, Value &value) override
+    {
+        std::lock_guard<std::mutex> lock(_ttl_mutex);
+
+        ValueWithTTL<Value> valueWithTTL;
+
+        if (!_cache.get(key, valueWithTTL)) return false;
+        
+        if (Clock::now() >= valueWithTTL.GetexpireTime())
+        {
+            _cache.remove(key);
+            return false;
+        }
+
+        value = valueWithTTL.GetValue();
+        return true;
+    }
+
+    Value get(const Key &key) override
+    {
+        Value value{};
+        get(key, value);
+        return value;
+    }
+
+    void remove(const Key &key)
+    {
+        std::lock_guard<std::mutex> lock(_ttl_mutex);
+        _cache.remove(key);
+    }
+
+private:
+    static Duration validateTTL(Duration ttl)
+    {
+        if (ttl <= Duration::zero()) {
+            throw std::invalid_argument("TTL must be greater than zero");
+        }
+
+        return ttl;
+    }
+
+private:
+    LruCache<Key, ValueWithTTL<Value>> _cache;
+    std::mutex _ttl_mutex;
+    Duration _defaultTTL;
+};
 
 } // namesapce

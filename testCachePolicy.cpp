@@ -6,6 +6,7 @@
 #include <random>
 #include <algorithm>
 #include <array>
+#include <thread>
 #include "ICachePolicy.h"
 #include "LruCache.h"
 
@@ -30,7 +31,7 @@ void printResults(const std::string& testName, int capacity,
     std::cout << "=====" << testName << " 结果汇总 =====" << std::endl;
     std::cout << "缓存大小: " << capacity << std::endl;
 
-    std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LFU-Aging"};
+    std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LRU-TTL", "LFU-Aging"};
 
     for (size_t i = 0; i < hits.size(); ++i) {
         double hitRate = 100.0 * hits[i] / get_operations[i];
@@ -61,13 +62,16 @@ void testHotDataAccess() {
     // k = 2 数据被访问2次后才进入缓存，区分热点和冷数据
     CppCache::LruKCache<int, std::string> lruk(CAPACITY, HOT_KEYS + COLD_KEYS, 2);
 
+    // LRU-TTL
+    CppCache::LruCacheWithTTL<int, std::string> lruttl(CAPACITY);
+
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    std::array<CppCache::ICachePolicy<int, std::string>*, 5> caches = {&lru, &lru, &lru, &lruk, &lru};
-    std::vector<int> hits(5, 0);
-    std::vector<int> get_operations(5, 0);
-    std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LFU-Aging"};
+    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lru, &lru, &lruk, &lruttl, &lru};
+    std::vector<int> hits(6, 0);
+    std::vector<int> get_operations(6, 0);
+    std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LRU-TTL", "LFU-Aging"};
 
     // 为所有缓存对象进行相同的操作序列测试
     for (int i = 0; i < caches.size(); ++i) {
@@ -123,10 +127,13 @@ void testLoopPattern() {
     // k = 2
     CppCache::LruKCache<int, std::string> lruk(CAPACITY, LOOP_SIZE * 2, 2);
 
-    std::array<CppCache::ICachePolicy<int, std::string>*, 5> caches = {&lru, &lru, &lru, &lruk, &lru};
-    std::vector<int> hits(5, 0);
-    std::vector<int> get_operations(5, 0);
-    std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LFU-Aging"};
+    // LRU-TTL
+    CppCache::LruCacheWithTTL<int, std::string> lruttl(CAPACITY);
+
+    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lru, &lru, &lruk, &lruttl, &lru};
+    std::vector<int> hits(6, 0);
+    std::vector<int> get_operations(6, 0);
+    std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LRU-TTL", "LFU-Aging"};
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -191,13 +198,16 @@ void testWorkloadShift() {
     // 历史记录容量500， k = 2
     CppCache::LruKCache<int, std::string> lruk(CAPACITY, 500, 2);
 
+    // LRU-TTL
+    CppCache::LruCacheWithTTL<int, std::string> lruttl(CAPACITY);
+
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    std::array<CppCache::ICachePolicy<int, std::string>*, 5> caches = {&lru, &lru, &lru, &lru, &lru};
-    std::vector<int> hits(5, 0);
-    std::vector<int> get_operations(5, 0);
-    std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LFU-Aging"};
+    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lru, &lru, &lru, &lruttl, &lru};
+    std::vector<int> hits(6, 0);
+    std::vector<int> get_operations(6, 0);
+    std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LRU-TTL", "LFU-Aging"};
 
     // 为每种缓存算法运行相同的测试
     for (int i = 0; i < caches.size(); ++i) {
@@ -273,9 +283,93 @@ void testWorkloadShift() {
     printResults("工作负载剧烈变化测试", CAPACITY, get_operations, hits);
 }
 
+void testLruCacheWithTTL()
+{
+    std::cout << "\n=== LRU-TTL 功能测试 ===" << std::endl;
+
+    using Cache = CppCache::LruCacheWithTTL<int, std::string>;
+
+    using Milliseconds = std::chrono::milliseconds;
+
+    int passed = 0;
+    int total = 0;
+
+    auto check = [&](bool condition, const std::string &testName){
+        ++total;
+        if (condition) {
+            ++passed;
+            std::cout << "[PASS]" << testName << std::endl;
+        }
+        else {
+            std::cout << "[FAIL]" << testName << std::endl;
+        }        
+    };
+
+    // 500ms作为默认TTL
+    Cache cache(3, Milliseconds(500));
+
+    // 测试一：通过ICachePolicy使用默认TTL。
+
+    CppCache::ICachePolicy<int, std::string> *policy = &cache;
+
+    policy->put(1, "default-ttl");
+
+    std::string result;
+
+    check(policy->get(1, result) && result == "default-ttl",
+            "默认TTL：写入后立即读取成功");
+
+    std::this_thread::sleep_for(Milliseconds(600));
+
+    check(!policy->get(1, result) && result == "default-ttl",
+            "默认TTL：500毫秒后缓存过期");
+
+    // 测试二：为单个缓存指定TTL
+    cache.put(2, "custom-ttl", Milliseconds(1000));
+
+    std::this_thread::sleep_for(Milliseconds(200));
+
+    check(policy->get(2, result) && result == "custom-ttl",
+            "自定义TTL：200毫秒后仍然有效");
+
+    std::this_thread::sleep_for(Milliseconds(900));
+
+    check(!policy->get(2, result), "自定义TTL：累计超过至少1000毫秒后过期");
+
+    // 测试三：重新 put 同一个 key 会刷新过期时间。
+
+    cache.put(3, "old-value", Milliseconds(500));
+
+    std::this_thread::sleep_for(Milliseconds(200));
+
+    cache.put(3, "new-value", Milliseconds(500));
+
+    std::this_thread::sleep_for(Milliseconds(200));
+
+    check(cache.get(3, result) && result == "new-value",
+            "更新key后刷新TTL并返回新值");
+
+    std::this_thread::sleep_for(Milliseconds(400));
+
+    check(!cache.get(3, result), "从最后一次put开始计算过期时间");
+
+    // 测试四：主动删除
+    cache.put(4, "remove-test");
+    cache.remove(4);
+
+    check(!cache.get(4, result), "remove后无法获取");
+
+    std::cout << "LRU-TTL测试结果："
+              << passed << "/" << total
+              << "通过"
+              << std::endl;
+}
+
 int main() {
     testHotDataAccess();
     testLoopPattern();
     testWorkloadShift();
+    testLruCacheWithTTL();
     return 0;
 }
+
