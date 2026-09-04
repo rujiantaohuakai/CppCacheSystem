@@ -379,33 +379,44 @@ private:
 };
 
 
-// 使用组合实现定时过期的Lru
+// 使用组合实现 支持默认 TTL 和每项自定义 TTL、读取时不续期的绝对过期 LRU。（Time-To-Live 允许存活的时长）
 template<typename Value>
 class ValueWithTTL
 {
 public:
     using Clock = std::chrono::steady_clock;
+    using Duration = std::chrono::milliseconds;
     
     ValueWithTTL() = default;
 
-    ValueWithTTL(const Value& value, Clock::time_point expireTime)
-                : _value(value), _expireTime(expireTime)
+    ValueWithTTL(const Value& value, Clock::time_point expireTime, Duration ttl)
+                : _value(value), _expireTime(expireTime), _ttl(ttl)
     {}
+
     Value GetValue() const
     {
         return _value;
     }
+
     Clock::time_point GetexpireTime() const
     {
         return _expireTime;
     }
 
+    Duration GetTTL() const
+    {
+        return _ttl;
+    }
+
 private:
     Value _value{};
+
     // 默认对象视为已经过期
     Clock::time_point _expireTime{
         Clock::time_point::min()
     };
+
+    Duration _ttl{Duration::zero()};
 };
 
 template<typename Key, typename Value>
@@ -437,8 +448,10 @@ public:
 
         ttl = validateTTL(ttl);
 
+        //const auto expireTime = Clock::now() + ttl;
+
         _cache.put(key, ValueWithTTL<Value>{
-            value, Clock::now() + ttl
+            value, Clock::now() + ttl, ttl
         });
     }
 
@@ -446,18 +459,14 @@ public:
     {
         std::lock_guard<std::mutex> lock(_ttl_mutex);
 
-        ValueWithTTL<Value> valueWithTTL;
+        return getUnlocked(key, value, false);
+    }
 
-        if (!_cache.get(key, valueWithTTL)) return false;
-        
-        if (Clock::now() >= valueWithTTL.GetexpireTime())
-        {
-            _cache.remove(key);
-            return false;
-        }
+    bool getAndRefreshTTL(const Key &key, Value &value)
+    {
+        std::lock_guard<std::mutex> lock(_ttl_mutex);
 
-        value = valueWithTTL.GetValue();
-        return true;
+        return getUnlocked(key, value, true);
     }
 
     Value get(const Key &key) override
@@ -483,10 +492,43 @@ private:
         return ttl;
     }
 
+    bool getUnlocked(const Key &key, Value &value, bool refreshTTL)
+    {
+        ValueWithTTL<Value> v;
+        
+        if (!_cache.get(key, v)) return false;
+
+        const auto now = Clock::now();
+
+        if (now >= v.GetexpireTime()) {
+            _cache.remove(key);
+            return false;
+        }
+
+        value = v.GetValue();
+
+        if (refreshTTL) {
+            const Duration ttl = v.GetTTL();
+            const auto newExpireTime = now + ttl;
+
+            _cache.put(key, ValueWithTTL<Value>{
+                            value,
+                            newExpireTime,
+                            ttl
+            });
+        }
+        
+        return true;
+    }
+
 private:
     LruCache<Key, ValueWithTTL<Value>> _cache;
     std::mutex _ttl_mutex;
     Duration _defaultTTL;
+
 };
+
+
+
 
 } // namesapce
