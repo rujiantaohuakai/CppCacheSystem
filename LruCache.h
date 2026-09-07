@@ -439,7 +439,23 @@ public:
 
     void put(const Key &key, const Value value) override
     {
-        put(key, value, _defaultTTL);
+        std::lock_guard<std::mutex> lock(_ttl_mutex);
+
+        Duration ttl = _defaultTTL;
+        ValueWithTTL<Value> oldValueWithTTL;
+
+        if (_cache.get(key, oldValueWithTTL)) {
+            const auto now = Clock::now();
+
+            if (now < oldValueWithTTL.GetexpireTime()) {
+                ttl = oldValueWithTTL.GetTTL();
+            }
+            else {
+                _cache.remove(key);
+            }
+        }
+
+        putUnlocked(key, value, ttl);
     }
 
     void put(const Key &key, const Value &value, Duration ttl) 
@@ -450,9 +466,7 @@ public:
 
         //const auto expireTime = Clock::now() + ttl;
 
-        _cache.put(key, ValueWithTTL<Value>{
-            value, Clock::now() + ttl, ttl
-        });
+        putUnlocked(key, value, ttl);
     }
 
     bool get(const Key &key, Value &value) override
@@ -519,6 +533,17 @@ private:
         }
         
         return true;
+    }
+
+    void putUnlocked(const Key& key, const Value &value, Duration ttl) {
+        // const auto now = Clock::now();
+        // const auto newExpireTime = now + ttl;
+
+        _cache.put(key, ValueWithTTL<Value>{
+                        value,
+                        Clock::now() + ttl,
+                        ttl
+        });
     }
 
 private:

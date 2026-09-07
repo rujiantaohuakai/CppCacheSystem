@@ -431,11 +431,148 @@ void testLruCacheWithTTL()
         << std::endl;
 }
 
+bool testLruCacheWithTTLPut()
+{
+    std::cout << "\n=== LRU-TTL put 语义测试 ===" << std::endl;
+
+    using Cache = CppCache::LruCacheWithTTL<int, std::string>;
+    using Milliseconds = std::chrono::milliseconds;
+
+    int passed = 0;
+    int total = 0;
+
+    auto check = [&](bool condition, const std::string& testName)
+    {
+        ++total;
+
+        if (condition) {
+            ++passed;
+            std::cout << "[PASS] " << testName << std::endl;
+        }
+        else {
+            std::cout << "[FAIL] " << testName << std::endl;
+        }
+    };
+
+    // 1. 新key没有指定TTL：使用默认TTL。
+    {
+        Cache cache(3, Milliseconds{500});
+        CppCache::ICachePolicy<int, std::string>* policy = &cache;
+        std::string result;
+
+        policy->put(1, "default-ttl");
+
+        check(policy->get(1, result) && result == "default-ttl",
+              "新key：未指定TTL时写入成功");
+
+        std::this_thread::sleep_for(Milliseconds{800});
+
+        check(!policy->get(1, result),
+              "新key：按默认500ms过期");
+    }
+
+    // 2. 未过期的key没有指定TTL：
+    //    沿用原TTL，并从本次put重新计时。
+    {
+        Cache cache(3, Milliseconds{500});
+        CppCache::ICachePolicy<int, std::string>* policy = &cache;
+        std::string result;
+
+        cache.put(2, "old-value", Milliseconds{2000});
+
+        std::this_thread::sleep_for(Milliseconds{1200});
+
+        // 通过基类接口调用两参数put，也应沿用原TTL。
+        policy->put(2, "new-value");
+
+        std::this_thread::sleep_for(Milliseconds{1200});
+
+        /*
+         * 此时距离第一次put约2400ms，距离第二次put约1200ms。
+         *
+         * 如果使用默认500ms：已经过期。
+         * 如果只更新value，保持原过期时刻：已经过期。
+         * 如果沿用2000ms，并从第二次put重新计时：仍然有效。
+         */
+        check(policy->get(2, result) && result == "new-value",
+              "有效key：沿用原TTL，更新值并重新计算过期时刻");
+
+        std::this_thread::sleep_for(Milliseconds{1100});
+
+        // 距第二次put至少2300ms，超过沿用的2000ms。
+        check(!policy->get(2, result),
+              "沿用的2000ms从第二次put开始计时并正常到期");
+    }
+
+    // 3. 显式指定新TTL：
+    //    覆盖旧TTL，后续两参数put应沿用最近指定的TTL。
+    {
+        Cache cache(3, Milliseconds{2000});
+        CppCache::ICachePolicy<int, std::string>* policy = &cache;
+        std::string result;
+
+        cache.put(3, "first-value", Milliseconds{3000});
+        cache.put(3, "explicit-update", Milliseconds{500});
+
+        check(policy->get(3, result) && result == "explicit-update",
+              "显式TTL：相同key的业务值更新成功");
+
+        // 应沿用最近指定的500ms。
+        policy->put(3, "implicit-update");
+
+        check(policy->get(3, result) && result == "implicit-update",
+              "再次省略TTL：业务值更新成功");
+
+        std::this_thread::sleep_for(Milliseconds{800});
+
+        // 500ms已过，但默认2000ms和最初指定的3000ms尚未到。
+        check(!policy->get(3, result),
+              "再次省略TTL：沿用最近显式指定的500ms");
+    }
+
+    // 4. 已过期但尚未被删除的key：
+    //    两参数put将其视为新key，使用默认TTL。
+    {
+        Cache cache(3, Milliseconds{1500});
+        CppCache::ICachePolicy<int, std::string>* policy = &cache;
+        std::string result;
+
+        cache.put(4, "expired-value", Milliseconds{400});
+
+        std::this_thread::sleep_for(Milliseconds{700});
+
+        /*
+         * 此处故意不调用get。
+         * 否则get会先删除过期节点，无法测试put自己处理过期节点。
+         */
+        policy->put(4, "rewritten-value");
+
+        std::this_thread::sleep_for(Milliseconds{700});
+
+        // 已超过旧TTL 400ms，但尚未到默认TTL 1500ms。
+        check(policy->get(4, result) && result == "rewritten-value",
+              "过期key：重新写入后使用默认TTL");
+
+        std::this_thread::sleep_for(Milliseconds{1100});
+
+        // 距重新写入至少1800ms，超过默认1500ms。
+        check(!policy->get(4, result),
+              "过期key重写：按默认1500ms正常到期");
+    }
+
+    std::cout << "LRU-TTL put测试结果："
+              << passed << "/" << total
+              << " 通过" << std::endl;
+
+    return passed == total;
+}
+
 int main() {
     testHotDataAccess();
     testLoopPattern();
     testWorkloadShift();
     testLruCacheWithTTL();
+    testLruCacheWithTTLPut();
     return 0;
 }
 
