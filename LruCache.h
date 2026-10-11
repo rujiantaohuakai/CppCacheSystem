@@ -52,7 +52,7 @@ public:
     using NodePtr = std::shared_ptr<LruNodeType>;
     using NodeMap = std::unordered_map<Key, NodePtr>;
 
-    explicit LruCache(int capacity)
+    explicit LruCache(size_t capacity)
         : _capacity{validateCapacity(capacity)}
     {
         initializeList();
