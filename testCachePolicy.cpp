@@ -67,16 +67,20 @@ void testHotDataAccess() {
     // LRU-TTL
     CppCache::LruCacheWithTTL<int, std::string> lruttl(CAPACITY);
 
+    // LFU-AGING
+    CppCache::LfuCache<int, std::string> lfuAging(CAPACITY, 100);
+
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &lru, &lruk, &lruttl, &lru};
+    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &lru, &lruk, &lruttl, &lfuAging};
     std::vector<int> hits(6, 0);
     std::vector<int> get_operations(6, 0);
     std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LRU-TTL", "LFU-Aging"};
 
     // 为所有缓存对象进行相同的操作序列测试
     for (int i = 0; i < caches.size(); ++i) {
+        gen.seed(1024);
         // 预热缓存，插入一些数据
         for (int key = 0; key < HOT_KEYS; ++key) {
             std::string value = "value" + std::to_string(key);
@@ -133,7 +137,9 @@ void testLoopPattern() {
     // LRU-TTL
     CppCache::LruCacheWithTTL<int, std::string> lruttl(CAPACITY);
 
-    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &lru, &lruk, &lruttl, &lru};
+    // LFU-AGING
+    CppCache::LfuCache<int, std::string> lfuAging(CAPACITY, 100);
+    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &lru, &lruk, &lruttl, &lfuAging};
     std::vector<int> hits(6, 0);
     std::vector<int> get_operations(6, 0);
     std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LRU-TTL", "LFU-Aging"};
@@ -143,6 +149,7 @@ void testLoopPattern() {
 
     // 为每种缓存算法运行相同的测试
     for (int i = 0; i < caches.size(); ++i) {
+        gen.seed(1024);
         // 先预热一部分数据（只加载20%的数据）
         for (int key = 0; key < LOOP_SIZE / 5; ++key) {
             std::string value = "loop" + std::to_string(key);
@@ -205,16 +212,20 @@ void testWorkloadShift() {
     // LRU-TTL
     CppCache::LruCacheWithTTL<int, std::string> lruttl(CAPACITY);
 
+    // LFU-AGING
+    CppCache::LfuCache<int, std::string> lfuAging(CAPACITY, 100);
+
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &lru, &lruk, &lruttl, &lru};
+    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &lru, &lruk, &lruttl, &lfuAging};
     std::vector<int> hits(6, 0);
     std::vector<int> get_operations(6, 0);
     std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LRU-TTL", "LFU-Aging"};
 
     // 为每种缓存算法运行相同的测试
     for (int i = 0; i < caches.size(); ++i) {
+        gen.seed(1024);
         // 先预热缓存，只插入少量初始数据
         for (int key = 0; key < 30; ++key) {
             std::string value = "init" + std::to_string(key);

@@ -7,6 +7,8 @@
 #include <unordered_map>
 #include <stdexcept>
 #include <chrono>
+#include <algorithm>
+#include <cstdint>
 
 #include "ICachePolicy.h"
 
@@ -28,6 +30,9 @@ private:
     friend class FreqList<Key, Value>;
     friend class LfuCache<Key, Value>;
 public:
+    LfuNode() : _freq(1), _next(nullptr)
+    {}
+
     LfuNode(Key key, Value value, size_t freq)
     // std::weak_ptr不能用nullptr构造
     : _key(key), _value(value), _freq(freq), _prev(), _next(nullptr)
@@ -48,7 +53,7 @@ public:
 template<typename Key, typename Value>
 class FreqList {
     using LfuNodeType = LfuNode<Key, Value>;
-    using NodePtr = std::shared_ptr<LfuNode<Key, Value>>;
+    using NodePtr = std::shared_ptr<LfuNodeType>;
     
 private:
     size_t _freq;
@@ -87,10 +92,20 @@ private:
     std::mutex _mutex;
     NodeMap _nodeMap;
     FreqMap _freqMap;
+    size_t _maxAverageNum;
+    size_t _currentAverageNum;
+    size_t _currentTotalNum;
 public:
-    LfuCache(size_t capacity)
-    : _capacity(capacity), _minFreq(1)
+    explicit LfuCache(size_t capacity)
+    : _capacity(capacity), _minFreq(1), _maxAverageNum(100000000), _currentAverageNum(0), _currentTotalNum(0)
     {}
+    explicit LfuCache(size_t capacity, size_t maxAverageNum)
+    : _capacity(capacity), _minFreq(1), _maxAverageNum(maxAverageNum), _currentAverageNum(0), _currentTotalNum(0)
+    {
+        if (_maxAverageNum == 0) {
+            throw std::invalid_argument("maxAverageNum must be at least 1");
+        }
+    }
 
     ~LfuCache() override = default;
     // 缓存接口
@@ -117,6 +132,7 @@ public:
             // 从链表和哈希表中删除
             deleteNodeFromFreqList(delNode);
             _nodeMap.erase(delNode->_key);
+            decreaseCurrentAverageNum(delNode->_freq);
 
             if (minList->isEmpty()) {
                 _freqMap.erase(_minFreq);
@@ -128,6 +144,7 @@ public:
         // 不返回是否插入成功的标志。
         _nodeMap.emplace(key, newNode);
         addNodeToFreqList(newNode);
+        increaseCurrentAverageNum();
 
         _minFreq = 1;
     }
@@ -141,7 +158,8 @@ public:
         // 获取值
         value = node->_value;
 
-       increaseFrequency(node);
+        increaseFrequency(node);
+        
         
         return true;
         
@@ -157,7 +175,7 @@ private:
     void deleteNodeFromFreqList(NodePtr node) {
         NodePtr prev = node->_prev.lock();
         prev->_next = node->_next;
-        node->_next->_prev = node->_prev;   
+        node->_next->_prev = node->_prev;
     }
 
     void addNodeToFreqList(NodePtr node) {
@@ -203,20 +221,73 @@ private:
 
         // 加入到新FreqList中
         addNodeToFreqList(node);
+        increaseCurrentAverageNum();
+    }
 
-        
+    void increaseCurrentAverageNum() {
+        _currentTotalNum++;
 
-        // if (_freqMap[_minFreq]->_dummyHead->_next == _freqMap[_minFreq]->_dummyTail) {
-        //     _minFreq++;
-        // }
+        if (_nodeMap.empty()) {
+            _currentAverageNum = 0;
+        }
+        else {
+            _currentAverageNum = _currentTotalNum / _nodeMap.size();
+        }   
+
+        if (_currentAverageNum > _maxAverageNum) {
+            handleOverMaxAverageNum();
+        }
+    }
+
+    void decreaseCurrentAverageNum(size_t num) {
+        _currentTotalNum -= num;
+        if (_nodeMap.empty()) {
+            _currentAverageNum = 0;
+        }
+        else {
+            _currentAverageNum = _currentTotalNum / _nodeMap.size();
+        }
+
+    }
+
+    void handleOverMaxAverageNum() {
+        // 所有节点减少freq
+        if (_nodeMap.empty()) return;
+
+        const size_t decrease = std::max<size_t>(1, _maxAverageNum / 2);
+
+        size_t newTotal = 0;
+
+        for (auto it = _nodeMap.begin(); it != _nodeMap.end(); ++it) {
+            if (!it->second) return;
+            NodePtr node = it->second;
+
+            deleteNodeFromFreqList(node);
+
+            node->_freq = node->_freq > decrease
+                        ? node->_freq -decrease
+                        : size_t(1);
+
+            addNodeToFreqList(node);
+            newTotal += node->_freq;
+        }
+        _currentTotalNum = newTotal;
+        _currentAverageNum = _currentTotalNum / _nodeMap.size();
+        updateMinFreq();
+    }
+
+    void updateMinFreq() {
+        _minFreq = SIZE_MAX;
+        for (const auto &pair : _freqMap) {
+            if (pair.second && !pair.second->isEmpty()) {
+                _minFreq = std::min(_minFreq, pair.first);
+            }
+        }
+        if (_minFreq == SIZE_MAX) {
+            _minFreq = 1;
+        }
     }
 };
-
-
-
-
-
-
 
 
 
