@@ -20,25 +20,25 @@ template<typename Key, typename Value>
 class LruNode
 {
 private:
-    Key _key;
-    Value _value;
-    size_t _accessCount; // 访问次数
-    std::weak_ptr<LruNode<Key, Value>> _prev; // 防止循环引用
-    std::shared_ptr<LruNode<Key, Value>> _next;
+    Key m_key;
+    Value m_value;
+    size_t m_accessCount; // 访问次数
+    std::weak_ptr<LruNode<Key, Value>> m_prev; // 防止循环引用
+    std::shared_ptr<LruNode<Key, Value>> m_next;
 
 public:
     LruNode(Key key, Value value)
-        : _key(key)
-        , _value(value)
-        , _accessCount(1)
+        : m_key(key)
+        , m_value(value)
+        , m_accessCount(1)
     {}
 
     // 访问器
-    Key getKey() const { return _key; }
-    Value getValue() const { return _value; }
-    void setValue(const Value& value) { _value = value; }
-    size_t getAccessCount() const { return _accessCount; }
-    void incrementAccessCount() { ++_accessCount; }
+    Key getKey() const { return m_key; }
+    Value getValue() const { return m_value; }
+    void setValue(const Value& value) { m_value = value; }
+    size_t getAccessCount() const { return m_accessCount; }
+    void incrementAccessCount() { ++m_accessCount; }
 
     friend class LruCache<Key, Value>;
 
@@ -53,7 +53,7 @@ public:
     using NodeMap = std::unordered_map<Key, NodePtr>;
 
     explicit LruCache(size_t capacity)
-        : _capacity{validateCapacity(capacity)}
+        : m_capacity{validateCapacity(capacity)}
     {
         initializeList();
     }
@@ -76,35 +76,35 @@ public:
                              Key& evictedKey)
     {
         // capacity == 0表示禁用缓存
-        if (_capacity == 0) return false;
+        if (m_capacity == 0) return false;
 
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::lock_guard<std::mutex> lock(m_mutex);
 
-        auto it = _nodeMap.find(key);
-        if (it != _nodeMap.end()) {
+        auto it = m_nodeMap.find(key);
+        if (it != m_nodeMap.end()) {
             updateExistingNode(it->second, value);
             return false;
         }
 
         bool evicted = false;
-        if (_nodeMap.size() >= static_cast<size_t>(_capacity)) {
+        if (m_nodeMap.size() >= static_cast<size_t>(m_capacity)) {
             evictedKey = evictLeastRecent();
             evicted = true;
         }
 
         NodePtr newNode = std::make_shared<LruNodeType>(key, value);
         insertNode(newNode);
-        _nodeMap[key] = newNode;
+        m_nodeMap[key] = newNode;
 
         return evicted;
     }
 
     bool get(const Key &key, Value &value) override
     {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::lock_guard<std::mutex> lock(m_mutex);
 
-        auto it = _nodeMap.find(key);
-        if (it != _nodeMap.end()) {
+        auto it = m_nodeMap.find(key);
+        if (it != m_nodeMap.end()) {
             moveToMostRecent(it->second);
             value = it->second->getValue();
             return true;
@@ -121,12 +121,12 @@ public:
 
     void remove(Key key)
     {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::lock_guard<std::mutex> lock(m_mutex);
 
-        auto it = _nodeMap.find(key);
-        if (it != _nodeMap.end()) {
+        auto it = m_nodeMap.find(key);
+        if (it != m_nodeMap.end()) {
             removeNode(it->second);
-            _nodeMap.erase(it);
+            m_nodeMap.erase(it);
         }
     }
 
@@ -142,11 +142,11 @@ private:
     void initializeList()
     {
         // 创建首尾虚拟节点
-        _dummyHead = std::make_shared<LruNodeType>(Key(), Value());
-        _dummyTail = std::make_shared<LruNodeType>(Key(), Value());
+        m_dummyHead = std::make_shared<LruNodeType>(Key(), Value());
+        m_dummyTail = std::make_shared<LruNodeType>(Key(), Value());
         
-        _dummyHead->_next = _dummyTail;
-        _dummyTail->_prev = _dummyHead;
+        m_dummyHead->m_next = m_dummyTail;
+        m_dummyTail->m_prev = m_dummyHead;
     }
 
     void updateExistingNode(NodePtr node, const Value &value)
@@ -158,14 +158,14 @@ private:
 
     // void addNewNode(const Key& key, const Value& value)
     // {
-    //     if (_nodeMap.size() >= _capacity)
+    //     if (m_nodeMap.size() >= m_capacity)
     //     {
     //         evictLeastRecent();
     //     }
 
     //     NodePtr newNode = std::make_shared<LruNodeType>(key, value);
     //     insertNode(newNode);
-    //     _nodeMap[key] = newNode;
+    //     m_nodeMap[key] = newNode;
     // }
 
     // 将该结点移动到最新位置
@@ -178,32 +178,32 @@ private:
     // 移除结点
     void removeNode(NodePtr node)
     {
-        if (!node->_prev.expired() && node->_next)
+        if (!node->m_prev.expired() && node->m_next)
         {
-            NodePtr prev = node->_prev.lock();
-            prev->_next = node->_next;
-            node->_next->_prev = prev;
-            node->_next = nullptr; // 清空_next指针，断开结点
+            NodePtr prev = node->m_prev.lock();
+            prev->m_next = node->m_next;
+            node->m_next->m_prev = prev;
+            node->m_next = nullptr; // 清空_next指针，断开结点
         }
     }
 
     // 从尾部插入结点
     void insertNode(NodePtr node)
     {
-        node->_next = _dummyTail;
-        node->_prev = _dummyTail->_prev.lock();
-        _dummyTail->_prev.lock()->_next = node;
-        _dummyTail->_prev = node;
+        node->m_next = m_dummyTail;
+        node->m_prev = m_dummyTail->m_prev.lock();
+        m_dummyTail->m_prev.lock()->m_next = node;
+        m_dummyTail->m_prev = node;
     }
 
     // 驱逐最近最少访问，调用前要保证缓存非空
     Key evictLeastRecent()
     {
-        NodePtr leastRecent = _dummyHead->_next;
+        NodePtr leastRecent = m_dummyHead->m_next;
         Key evictedKey = leastRecent->getKey();
 
         removeNode(leastRecent);
-        _nodeMap.erase(evictedKey);
+        m_nodeMap.erase(evictedKey);
 
         return evictedKey;
     }
@@ -211,22 +211,22 @@ private:
 
 
 private:
-    int         _capacity; // 缓存容量
-    NodeMap     _nodeMap; // key -> node
-    std::mutex  _mutex;
-    NodePtr     _dummyHead; // 虚拟头结点
-    NodePtr     _dummyTail; // 虚拟尾结点
+    int         m_capacity; // 缓存容量
+    NodeMap     m_nodeMap; // key -> node
+    std::mutex  m_mutex;
+    NodePtr     m_dummyHead; // 虚拟头结点
+    NodePtr     m_dummyTail; // 虚拟尾结点
 };
 
 
 /*
 我在实现 LRU-K 时遇到的难点是：历史访问计数和历史 value 分别存放在两个容器中。
-历史计数使用容量受限的 LRU；当历史缓存满时，它会自动淘汰最久未使用的 key。但原先代码无法感知“淘汰了哪个 key”，导致 _historyValueMap 中对应的 value 无法同步删除，可能形成残留数据并持续占用内存。
+历史计数使用容量受限的 LRU；当历史缓存满时，它会自动淘汰最久未使用的 key。但原先代码无法感知“淘汰了哪个 key”，导致 m_historyValueMap 中对应的 value 无法同步删除，可能形成残留数据并持续占用内存。
 
 我的解决方法：
 通过在基础LRU中添加一个返回值类型为bool，可以将key加入缓存，并返回被淘汰key的接口，并在put中调用，返回为true表示有key淘汰并通过引用参数获取被淘汰的key。在LRUK中判断是否有key淘汰，如果有就删除historyValueMap中的key。
 
-我的解决方式是扩展基础 LRU 的写入接口：在插入新 key 时，接口通过 bool 返回值表示是否发生淘汰，并通过引用参数返回被淘汰的 key。LRU-K 更新历史记录后，如果发现发生淘汰，就立即根据该 key 删除 _historyValueMap 中对应的 value。
+我的解决方式是扩展基础 LRU 的写入接口：在插入新 key 时，接口通过 bool 返回值表示是否发生淘汰，并通过引用参数返回被淘汰的 key。LRU-K 更新历史记录后，如果发现发生淘汰，就立即根据该 key 删除 m_historyValueMap 中对应的 value。
 这样保证了历史计数和历史 value 的生命周期一致，避免了过期 value 残留和内存增长问题。
 */
 template<typename Key, typename Value>
@@ -235,9 +235,9 @@ class LruKCache : public LruCache<Key, Value>
 public:
     LruKCache(int capacity, int historyCapacity, int k)
         : LruCache<Key, Value>(validateMainCapacity(capacity))
-        , _historyList(std::make_unique<LruCache<Key, size_t>>(
+        , m_historyList(std::make_unique<LruCache<Key, size_t>>(
                 validateHistoryCapacity(historyCapacity)))
-        , _k(validateK(k))
+        , m_k(validateK(k))
     {}
 
     Value get(const Key &key) override
@@ -252,7 +252,7 @@ public:
 
     bool get(const Key &key, Value &value) override
     {
-        std::lock_guard<std::mutex> lock(_mutex_k);
+        std::lock_guard<std::mutex> lock(m_mutex_k);
 
         bool inMainCache = LruCache<Key, Value>::get(key, value);
 
@@ -266,18 +266,18 @@ public:
         const size_t historyCount = recordHistoryAccess(key);
 
         // 如果数据不在主缓存，但访问次数达到了k次
-        if (historyCount >= static_cast<size_t>(_k))
+        if (historyCount >= static_cast<size_t>(m_k))
         {
             // 检查是否有历史值记录
-            auto it = _historyValueMap.find(key);
-            if (it != _historyValueMap.end())
+            auto it = m_historyValueMap.find(key);
+            if (it != m_historyValueMap.end())
             {
                 // 有历史值且>=k，记录并将其添加到主缓存
                 value = it->second;
 
                 // 从历史记录移除
-                _historyList->remove(key);
-                _historyValueMap.erase(it);
+                m_historyList->remove(key);
+                m_historyValueMap.erase(it);
 
                 // 添加到主缓存
                 LruCache<Key, Value>::put(key, value);
@@ -292,7 +292,7 @@ public:
 
     void put(const Key &key, Value value) override
     {
-        std::lock_guard<std::mutex> lock(_mutex_k);
+        std::lock_guard<std::mutex> lock(m_mutex_k);
 
         // 检查是否已在主缓存
         Value existingValue{};
@@ -310,14 +310,14 @@ public:
         size_t historyCount = recordHistoryAccess(key);
 
         // 保存值到历史记录映射，供后续get操作使用
-        _historyValueMap[key] = value;
+        m_historyValueMap[key] = value;
 
         // 检查是否到达k次访问阈值
-        if (historyCount >= static_cast<size_t>(_k))
+        if (historyCount >= static_cast<size_t>(m_k))
         {
             // 添加到主缓存
-            _historyList->remove(key);
-            _historyValueMap.erase(key);
+            m_historyList->remove(key);
+            m_historyValueMap.erase(key);
             LruCache<Key, Value>::put(key, value);
         }
     }
@@ -356,26 +356,26 @@ private:
     // 调用者必须已经持有 _mutex_k。
     size_t recordHistoryAccess(const Key& key)
     {
-        size_t historyCount = _historyList->get(key);
+        size_t historyCount = m_historyList->get(key);
         ++historyCount;
 
         Key evictedHistoryKey{};
         const bool historyEvicted =
-            _historyList->putAndGetEvictedKey(
+            m_historyList->putAndGetEvictedKey(
                 key, historyCount, evictedHistoryKey);
 
         // 历史访问记录被 LRU 淘汰时，同步清理暂存的 value。
         if (historyEvicted) {
-            _historyValueMap.erase(evictedHistoryKey);
+            m_historyValueMap.erase(evictedHistoryKey);
         }
 
         return historyCount;
     }
 
-    int _k; // 进入缓存队列的评判标准
-    std::unique_ptr<LruCache<Key, size_t>> _historyList; // 访问数据历史记录（value为访问次数）
-    std::unordered_map<Key, Value> _historyValueMap; // 存储未达到k次访问的数据值 
-    std::mutex _mutex_k;
+    int m_k; // 进入缓存队列的评判标准
+    std::unique_ptr<LruCache<Key, size_t>> m_historyList; // 访问数据历史记录（value为访问次数）
+    std::unordered_map<Key, Value> m_historyValueMap; // 存储未达到k次访问的数据值 
+    std::mutex m_mutex_k;
 };
 
 
@@ -390,33 +390,33 @@ public:
     ValueWithTTL() = default;
 
     ValueWithTTL(const Value& value, Clock::time_point expireTime, Duration ttl)
-                : _value(value), _expireTime(expireTime), _ttl(ttl)
+                : m_value(value), m_expireTime(expireTime), m_ttl(ttl)
     {}
 
     Value GetValue() const
     {
-        return _value;
+        return m_value;
     }
 
     Clock::time_point GetexpireTime() const
     {
-        return _expireTime;
+        return m_expireTime;
     }
 
     Duration GetTTL() const
     {
-        return _ttl;
+        return m_ttl;
     }
 
 private:
-    Value _value{};
+    Value m_value{};
 
     // 默认对象视为已经过期
-    Clock::time_point _expireTime{
+    Clock::time_point m_expireTime{
         Clock::time_point::min()
     };
 
-    Duration _ttl{Duration::zero()};
+    Duration m_ttl{Duration::zero()};
 };
 
 template<typename Key, typename Value>
@@ -431,27 +431,27 @@ public:
 
     explicit LruCacheWithTTL(int capacity
         , Duration defaultTTL = Duration{10})
-        : _cache(capacity) 
-        , _defaultTTL(validateTTL(defaultTTL))
+        : m_cache(capacity) 
+        , m_defaultTTL(validateTTL(defaultTTL))
     {}
 
     ~LruCacheWithTTL() override = default;
 
     void put(const Key &key, const Value value) override
     {
-        std::lock_guard<std::mutex> lock(_ttl_mutex);
+        std::lock_guard<std::mutex> lock(m_ttl_mutex);
 
-        Duration ttl = _defaultTTL;
+        Duration ttl = m_defaultTTL;
         ValueWithTTL<Value> oldValueWithTTL;
 
-        if (_cache.get(key, oldValueWithTTL)) {
+        if (m_cache.get(key, oldValueWithTTL)) {
             const auto now = Clock::now();
 
             if (now < oldValueWithTTL.GetexpireTime()) {
                 ttl = oldValueWithTTL.GetTTL();
             }
             else {
-                _cache.remove(key);
+                m_cache.remove(key);
             }
         }
 
@@ -460,7 +460,7 @@ public:
 
     void put(const Key &key, const Value &value, Duration ttl) 
     {
-        std::lock_guard<std::mutex> lock(_ttl_mutex);
+        std::lock_guard<std::mutex> lock(m_ttl_mutex);
 
         ttl = validateTTL(ttl);
 
@@ -471,14 +471,14 @@ public:
 
     bool get(const Key &key, Value &value) override
     {
-        std::lock_guard<std::mutex> lock(_ttl_mutex);
+        std::lock_guard<std::mutex> lock(m_ttl_mutex);
 
         return getUnlocked(key, value, false);
     }
 
     bool getAndRefreshTTL(const Key &key, Value &value)
     {
-        std::lock_guard<std::mutex> lock(_ttl_mutex);
+        std::lock_guard<std::mutex> lock(m_ttl_mutex);
 
         return getUnlocked(key, value, true);
     }
@@ -492,8 +492,8 @@ public:
 
     void remove(const Key &key)
     {
-        std::lock_guard<std::mutex> lock(_ttl_mutex);
-        _cache.remove(key);
+        std::lock_guard<std::mutex> lock(m_ttl_mutex);
+        m_cache.remove(key);
     }
 
 private:
@@ -510,12 +510,12 @@ private:
     {
         ValueWithTTL<Value> v;
         
-        if (!_cache.get(key, v)) return false;
+        if (!m_cache.get(key, v)) return false;
 
         const auto now = Clock::now();
 
         if (now >= v.GetexpireTime()) {
-            _cache.remove(key);
+            m_cache.remove(key);
             return false;
         }
 
@@ -525,7 +525,7 @@ private:
             const Duration ttl = v.GetTTL();
             const auto newExpireTime = now + ttl;
 
-            _cache.put(key, ValueWithTTL<Value>{
+            m_cache.put(key, ValueWithTTL<Value>{
                             value,
                             newExpireTime,
                             ttl
@@ -539,7 +539,7 @@ private:
         // const auto now = Clock::now();
         // const auto newExpireTime = now + ttl;
 
-        _cache.put(key, ValueWithTTL<Value>{
+        m_cache.put(key, ValueWithTTL<Value>{
                         value,
                         Clock::now() + ttl,
                         ttl
@@ -547,13 +547,13 @@ private:
     }
 
 private:
-    LruCache<Key, ValueWithTTL<Value>> _cache;
-    std::mutex _ttl_mutex;
-    Duration _defaultTTL;
+    LruCache<Key, ValueWithTTL<Value>> m_cache;
+    std::mutex m_ttl_mutex;
+    Duration m_defaultTTL;
 
 };
 
 
 
 
-} // namesapce
+} // namesapce CppCache
