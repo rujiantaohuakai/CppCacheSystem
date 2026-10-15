@@ -21,7 +21,7 @@ private:
 
 
 public:
-    explicit ArcCache(size_t capacity = 10, size_t transformThreshold = 3)
+    explicit ArcCache(size_t capacity = 10, size_t transformThreshold = 4)
     : m_capacity(capacity)
     , m_transformThreshold(transformThreshold)
     , m_lruPart(std::make_unique<ArcLruPart<Key, Value>>(capacity, transformThreshold))
