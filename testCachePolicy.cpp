@@ -10,6 +10,7 @@
 #include "ICachePolicy.h"
 #include "LruCache.h"
 #include "LfuCache.h"
+#include "ArcCache/ArcCache.h"
 
 // 计时器
 class Timer {
@@ -58,6 +59,7 @@ void testHotDataAccess() {
 
     CppCache::LruCache<int, std::string> lru(CAPACITY);
     CppCache::LfuCache<int, std::string> lfu(CAPACITY);
+    CppCache::ArcCache<int, std::string> arc(CAPACITY);
     // LRU-K参数：
     // 主缓存容量不变
     // 历史记录容量设为可能访问的所有键数量
@@ -73,7 +75,7 @@ void testHotDataAccess() {
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &lru, &lruk, &lruttl, &lfuAging};
+    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &arc, &lruk, &lruttl, &lfuAging};
     std::vector<int> hits(6, 0);
     std::vector<int> get_operations(6, 0);
     std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LRU-TTL", "LFU-Aging"};
@@ -129,6 +131,7 @@ void testLoopPattern() {
 
     CppCache::LruCache<int, std::string> lru(CAPACITY);
     CppCache::LfuCache<int, std::string> lfu(CAPACITY);
+    CppCache::ArcCache<int, std::string> arc(CAPACITY);
     // LRU-K参数：
     // 历史记录容量为总循环大小两倍，覆盖范围内和范围外的数据
     // k = 2
@@ -139,7 +142,7 @@ void testLoopPattern() {
 
     // LFU-AGING
     CppCache::LfuCache<int, std::string> lfuAging(CAPACITY, 100);
-    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &lru, &lruk, &lruttl, &lfuAging};
+    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &arc, &lruk, &lruttl, &lfuAging};
     std::vector<int> hits(6, 0);
     std::vector<int> get_operations(6, 0);
     std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LRU-TTL", "LFU-Aging"};
@@ -205,6 +208,7 @@ void testWorkloadShift() {
     
     CppCache::LruCache<int, std::string> lru(CAPACITY);
     CppCache::LfuCache<int, std::string> lfu(CAPACITY);
+    CppCache::ArcCache<int, std::string> arc(CAPACITY);
     // LRU-K参数：
     // 历史记录容量500， k = 2
     CppCache::LruKCache<int, std::string> lruk(CAPACITY, 500, 2);
@@ -218,7 +222,7 @@ void testWorkloadShift() {
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &lru, &lruk, &lruttl, &lfuAging};
+    std::array<CppCache::ICachePolicy<int, std::string>*, 6> caches = {&lru, &lfu, &arc, &lruk, &lruttl, &lfuAging};
     std::vector<int> hits(6, 0);
     std::vector<int> get_operations(6, 0);
     std::vector<std::string> names = {"LRU", "LFU", "ARC", "LRU-K", "LRU-TTL", "LFU-Aging"};

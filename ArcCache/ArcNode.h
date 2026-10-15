@@ -21,11 +21,11 @@ private:
 
 public:
     ArcNode() 
-    : m_next(nullptr)
+    : m_key(), m_value(), m_freq(1), m_next(nullptr)
     {}
 
     ArcNode(Key key, Value value)
-    : m_key(key), m_value(value), m_next(nullptr)
+    : m_key(key), m_value(value), m_freq(1), m_next(nullptr)
     {}
 
     // 访问器
